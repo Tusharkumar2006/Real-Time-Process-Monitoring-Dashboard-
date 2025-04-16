@@ -15,7 +15,7 @@ char process_list[10][256];
 
 // Function to monitor CPU usage
 void* monitor_cpu(void* arg) {
-    while(1) {
+    while (1) {
         FILE *fp;
         char buffer[256];
         fp = popen("top -bn1 | grep \"Cpu(s)\" | sed \"s/.*, *\\([0-9.]*\\)%* id.*/\\1/\" | awk '{print 100 - $1}'", "r");
@@ -25,128 +25,112 @@ void* monitor_cpu(void* arg) {
         }
 
         if (fgets(buffer, sizeof(buffer), fp) != NULL) {
-            cpu_usage = atoi(buffer);
+            cpu_usage = (int) atof(buffer);
         }
         fclose(fp);
-        usleep(1000000); // Update every second
+        sleep(1);
     }
     return NULL;
 }
 
 // Function to monitor memory usage
 void* monitor_memory(void* arg) {
-    while(1) {
+    while (1) {
         struct sysinfo si;
         sysinfo(&si);
-        memory_total = si.totalram / (1024 * 1024); // Convert to MB
-        memory_free = si.freeram / (1024 * 1024); // Convert to MB
-        usleep(1000000); // Update every second
+        memory_total = si.totalram / (1024 * 1024);  // MB
+        memory_free = si.freeram / (1024 * 1024);    // MB
+        sleep(1);
     }
     return NULL;
 }
 
-// Function to list processes (simplified)
+// Function to monitor top processes
 void* monitor_processes(void* arg) {
-    while(1) {
-        FILE *fp;
-        char buffer[256];
-        fp = popen("ps aux --sort=-%mem | head -n 11", "r");
+    while (1) {
+        FILE *fp = popen("ps aux --sort=-%mem | head -n 11", "r");
         if (fp == NULL) {
             perror("Error reading process list");
             exit(1);
         }
 
+        char buffer[256];
         int i = 0;
         while (fgets(buffer, sizeof(buffer), fp) != NULL && i < 10) {
             strcpy(process_list[i], buffer);
             i++;
         }
         fclose(fp);
-        usleep(1000000); // Update every second
+        sleep(1);
     }
     return NULL;
 }
 
-// Function to display information on the ncurses window
+// Display info using ncurses
 void display_info() {
     clear();
-    mvprintw(1, 1, "Real-Time Process Monitoring Dashboard");
-    mvprintw(3, 1, "CPU Usage: %d%%", cpu_usage);
-    mvprintw(4, 1, "Memory: %ldMB free / %ldMB total", memory_free, memory_total);
-    mvprintw(6, 1, "Top 10 Processes:");
+    mvprintw(1, 2, "Real-Time Process Monitoring Dashboard");
+    mvprintw(3, 2, "CPU Usage: %d%%", cpu_usage);
+    mvprintw(4, 2, "Memory Usage: %ld MB free / %ld MB total", memory_free, memory_total);
+    mvprintw(6, 2, "Top 10 Processes by Memory Usage:");
 
     for (int i = 0; i < 10; i++) {
-        mvprintw(7 + i, 1, "%s", process_list[i]);
+        mvprintw(7 + i, 2, "%s", process_list[i]);
     }
 
-    mvprintw(18, 1, "Press 'q' to quit, 'k' to kill process, 'p' to suspend process");
-
+    mvprintw(18, 2, "Commands: [q] Quit  [k] Kill Process  [p] Pause Process");
     refresh();
 }
 
-// Function to handle user input
-void handle_input(char input) {
+// Handle user input
+void handle_input(int ch) {
+    char pid_str[10], command[50];
     int pid;
-    char command[256];
-    if (input == 'q') {
-        // Quit the program
-        endwin();
-        exit(0);
-    } else if (input == 'k') {
-        // Kill a process (user will input the PID)
-        mvprintw(19, 1, "Enter PID to kill: ");
-        refresh();
-        echo();
-        char pid_input[10];
-        wgetstr(stdscr, pid_input);
-        pid = atoi(pid_input);
-        snprintf(command, sizeof(command), "kill %d", pid);
-        system(command);
-        noecho();
-    } else if (input == 'p') {
-        // Suspend a process (user will input the PID)
-        mvprintw(19, 1, "Enter PID to suspend: ");
-        refresh();
-        echo();
-        char pid_input[10];
-        wgetstr(stdscr, pid_input);
-        pid = atoi(pid_input);
-        snprintf(command, sizeof(command), "kill -STOP %d", pid);
-        system(command);
-        noecho();
+
+    switch (ch) {
+        case 'q':
+            endwin();
+            exit(0);
+        case 'k':
+            mvprintw(20, 2, "Enter PID to kill: ");
+            echo();
+            getstr(pid_str);
+            noecho();
+            pid = atoi(pid_str);
+            sprintf(command, "kill %d", pid);
+            system(command);
+            break;
+        case 'p':
+            mvprintw(20, 2, "Enter PID to pause: ");
+            echo();
+            getstr(pid_str);
+            noecho();
+            pid = atoi(pid_str);
+            sprintf(command, "kill -STOP %d", pid);
+            system(command);
+            break;
     }
 }
 
-// Main function
 int main() {
-    // Initialize ncurses
-    initscr();
-    noecho();
-    cbreak();
-    timeout(1000); // Non-blocking input
+    initscr();             // Start ncurses
+    noecho();              // Don't echo user input
+    cbreak();              // Disable line buffering
+    timeout(1000);         // Wait 1s for input
 
-    // Create threads to monitor CPU, memory, and processes
-    pthread_t cpu_thread, memory_thread, process_thread;
-    pthread_create(&cpu_thread, NULL, monitor_cpu, NULL);
-    pthread_create(&memory_thread, NULL, monitor_memory, NULL);
-    pthread_create(&process_thread, NULL, monitor_processes, NULL);
+    pthread_t t_cpu, t_mem, t_proc;
+    pthread_create(&t_cpu, NULL, monitor_cpu, NULL);
+    pthread_create(&t_mem, NULL, monitor_memory, NULL);
+    pthread_create(&t_proc, NULL, monitor_processes, NULL);
 
-    // Main loop for displaying information and handling user input
     while (1) {
         display_info();
-
-        int ch = getch(); // Get user input
+        int ch = getch();
         if (ch != ERR) {
-            handle_input(ch); // Handle the input
+            handle_input(ch);
         }
     }
 
-    // Clean up threads
-    pthread_join(cpu_thread, NULL);
-    pthread_join(memory_thread, NULL);
-    pthread_join(process_thread, NULL);
-
-    // End ncurses
     endwin();
     return 0;
 }
